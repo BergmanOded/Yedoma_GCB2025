@@ -14,5 +14,5 @@ Figure 5. Shifts in the methanogenic and methanotrophic microbial communities at
 Figure 6. Methane dynamics in upland yedoma, suggested mechanisms. <br> 
 
 
-Figures were generated in r (excludign Fig. 6, which was generated in powerpoiny), <br>
+Figures were generated in r (excludign Fig. 1 which was taken from Google maps and Fig. 6, which was generated in powerpoiny), <br>
 grouped and scaled to size in inkscape. For all figures, the r script is presented including all related files, needed to replicate the figures. 
