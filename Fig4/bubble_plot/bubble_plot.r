@@ -1,0 +1,234 @@
+# Load necessary libraries
+library(tidyverse)
+library(dplyr)
+library(phyloseq)
+library(ggplot2)
+library(RColorBrewer)
+
+metadata <- read.table(file = "/home/oded/Documents/orit_sivan/articles/oded/NGS/bubble_plot/sample-metadata.tsv", sep = "\t", header = T, 
+                       comment.char = "", row.names = 1, check.names = FALSE)
+str(metadata)
+
+metadata$depth <- as.numeric(metadata$depth)
+
+ASV <- read.table(file = "/home/oded/Documents/orit_sivan/articles/oded/NGS/bubble_plot/feature-table.tsv", sep = "\t", header = T, 
+                  comment.char = "", row.names = 1, check.names = FALSE)
+# Define the desired order of columns
+desired_order <- c("8_BH2", "38_BH2", "84_BH2", "146_BH2", "195_BH2", "225_BH2",
+                   "23_BH1", "56_BH1", "68_BH1", "86_BH1", "106_BH1", "166_BH1", "186_BH1", "259_BH1", "295_BH1", "305_BH1",
+                   "50_BH6", "100_BH6", "162_BH6", "198_BH6", "285_BH6", "345_BH6", "535_BH6", "564_BH6", "655_BH6", "695_BH6", "711_BH6")
+# Define the order for the samples
+sample_order <- c("8_BH2", "38_BH2", "84_BH2", "146_BH2", "195_BH2", "225_BH2",
+                  "23_BH1", "56_BH1", "68_BH1", "86_BH1", "106_BH1", "166_BH1", "186_BH1", "259_BH1", "295_BH1", "305_BH1",
+                  "50_BH6", "100_BH6", "162_BH6", "198_BH6", "285_BH6", "345_BH6", "535_BH6", "564_BH6", "655_BH6", "695_BH6", "711_BH6")
+
+# Reorder the columns of otu_table according to the desired order
+ASV <- ASV[, desired_order]
+str(ASV)
+
+ASV <- ASV %>%
+  mutate_if(is.integer, as.numeric) 
+
+# taxonomy file (has more ASVs as it was constructed based on additional experiments)
+
+taxonomy<-read.table("/home/oded/Documents/orit_sivan/articles/oded/NGS/bubble_plot/taxonomy.tsv", sep = "\t", header = T, comment.char = "", row.names = 1, check.names = FALSE)
+
+# Filter taxonomy file to include only ASVs present in ASV
+filtered_taxonomy <- taxonomy[rownames(taxonomy) %in% rownames(ASV), ]
+
+# Reorder taxonomy to match the order of ASVs in ASV
+ordered_taxonomy <- filtered_taxonomy[match(rownames(ASV), rownames(filtered_taxonomy)), ]
+
+# Verify the order (optional)
+all(rownames(ordered_taxonomy) == rownames(ASV))  # Should return TRUE
+
+# Save the result (optional)
+write.table(ordered_taxonomy, "/home/oded/Documents/orit_sivan/articles/oded/NGS/bubble_plot/24.11.18_yedoma_filtered_ordered_taxonomy.tsv", sep = "\t", quote = FALSE)
+
+# Split the Taxon column into separate taxonomic ranks
+ordered_taxonomy_parsed <- ordered_taxonomy %>%
+  mutate(
+    kingdom = sub("^d__([^;]*);.*", "\\1", Taxon),
+    phylum = sub("^.*p__([^;]*);.*", "\\1", Taxon),
+    class = sub("^.*c__([^;]*);.*", "\\1", Taxon),
+    order = sub("^.*o__([^;]*);.*", "\\1", Taxon),
+    family = sub("^.*f__([^;]*);.*", "\\1", Taxon),
+    genus = sub("^.*g__([^;]*);.*", "\\1", Taxon),
+    species = sub("^.*s__([^;]*)$", "\\1", Taxon)
+  )
+
+# Remove the original Taxon column
+ordered_taxonomy_parsed <- ordered_taxonomy_parsed %>% select(-Confidence)
+
+# ASVs + taxonomy
+ASV_taxonomy <- cbind(ASV = rownames(ASV), ASV, ordered_taxonomy_parsed)
+
+write.csv(ASV_taxonomy, "/home/oded/Documents/orit_sivan/articles/oded/NGS/bubble_plot/24.11.18_ASV_taxonomy.csv", row.names = FALSE)
+
+ASV_taxonomy <- cbind(ASV, ordered_taxonomy_parsed)
+
+ASV_arch<- dplyr::filter(ASV_taxonomy, grepl('Archaea', kingdom))
+ASV_bact <- dplyr::filter(ASV_taxonomy, grepl('Bacteria', kingdom))
+
+# now omit the Kingdom column, for final otu_table for phyloseq (by kingdom)
+
+ASV_arch <- ASV_arch[c(1:27)]
+
+ASV_bact <- ASV_bact[c(1:27)]
+
+# separate taxonomy to Bacteria and Archaea 
+
+taxonomy_arch<- dplyr::filter(ordered_taxonomy_parsed, grepl('Archaea', kingdom))
+taxonomy_bact <- dplyr::filter(ordered_taxonomy_parsed, grepl('Bacteria', kingdom))
+
+
+
+
+
+# Update taxonomy to use class level or next higher taxonomic level if class is not available
+taxonomy_arch$taxon <- ifelse(!is.na(taxonomy_arch$class), taxonomy_arch$class, taxonomy_arch$phylum)
+
+taxonomy_bact$taxon <- ifelse(!is.na(taxonomy_bact$class), taxonomy_bact$class, taxonomy_bact$phylum)
+
+# Create phyloseq objects
+otu_table_bact = otu_table(as.matrix(ASV_bact), taxa_are_rows = TRUE)
+otu_table_arch = otu_table(as.matrix(ASV_arch), taxa_are_rows = TRUE)
+SAMPLE <- sample_data(metadata)
+taxasums_bact <- tax_table(as.matrix(taxonomy_bact))
+taxasums_arch <- tax_table(as.matrix(taxonomy_arch))
+BP_bact <- phyloseq(otu_table_bact, SAMPLE, taxasums_bact)
+BP_arch <- phyloseq(otu_table_arch, SAMPLE, taxasums_arch)
+
+# Transform to relative abundances
+BP.rel.bact <- transform_sample_counts(BP_bact, function(x) x / sum(x))
+BP.rel.arch <- transform_sample_counts(BP_arch, function(x) x / sum(x))
+
+# Aggregate at the class level (or next higher level if class is not available)
+BP.rel.bact_class <- tax_glom(BP.rel.bact, "class")
+BP.rel.arch_class <- tax_glom(BP.rel.arch, "class")
+
+# Convert classes below 1% to "Others" and plot
+
+# Bacteria
+class_abundances_bact <- psmelt(BP.rel.bact_class) %>%
+  group_by(class) %>%
+  summarize(TotalAbundance = sum(Abundance)) %>%
+  ungroup()
+
+low_abundance_classes <- class_abundances_bact %>%
+  filter(TotalAbundance < 0.05) %>%
+  pull(class)
+
+tax_table_df_bact <- as.data.frame(tax_table(BP.rel.bact))
+tax_table_df_bact$taxon <- if_else(tax_table_df_bact$taxon %in% low_abundance_classes, "Others", tax_table_df_bact$taxon)
+tax_table(BP.rel.bact) <- tax_table(as.matrix(tax_table_df_bact))
+BP.rel.bact_class_updated <- tax_glom(BP.rel.bact, "taxon")
+
+# Archaea
+class_abundances_arch <- psmelt(BP.rel.arch_class) %>%
+  group_by(class) %>%
+  summarize(TotalAbundance = sum(Abundance)) %>%
+  ungroup()
+
+low_abundance_classes <- class_abundances_arch %>%
+  filter(TotalAbundance < 0.05) %>%
+  pull(class)
+
+tax_table_df_arch <- as.data.frame(tax_table(BP.rel.arch))
+tax_table_df_arch$taxon <- if_else(tax_table_df_arch$taxon %in% low_abundance_classes, "Others", tax_table_df_arch$taxon)
+tax_table(BP.rel.arch) <- tax_table(as.matrix(tax_table_df_arch))
+BP.rel.arch_class_updated <- tax_glom(BP.rel.arch, "taxon")
+
+# Define colors
+getPalette = colorRampPalette(brewer.pal(12, "Paired"))
+speciesList_bact_class = unique(tax_table(BP.rel.bact_class_updated)[,"taxon"])
+speciesPalette_bact_class = getPalette(length(speciesList_bact_class))
+names(speciesPalette_bact_class) = speciesList_bact_class
+
+speciesList_arch_class = unique(tax_table(BP.rel.arch_class_updated)[,"taxon"])
+speciesPalette_arch_class = getPalette(length(speciesList_arch_class))
+names(speciesPalette_arch_class) = speciesList_arch_class
+
+# Combine data for plotting
+bact_data <- psmelt(BP.rel.bact_class_updated) %>%
+  mutate(kingdom = "Bacteria")
+arch_data <- psmelt(BP.rel.arch_class_updated) %>%
+  mutate(kingdom = "Archaea")
+
+combined_data <- rbind(bact_data, arch_data)
+combined_data$sample <- factor(combined_data$sample, levels = sample_order)
+
+# Summarize data to avoid overlapping points
+combined_data_summarized <- combined_data %>%
+  group_by(sample, taxon, kingdom) %>%
+  summarize(Abundance = sum(Abundance), .groups = 'drop')
+
+# Convert the sample column to a factor with the specified order
+combined_data_summarized$sample <- factor(combined_data_summarized$sample, levels = sample_order)
+
+# Generate bubble plot with modified x-axis labels
+bubble_plot <- combined_data_summarized %>%
+  ggplot(aes(x = factor(gsub("_BH[126]", "", sample), levels = gsub("_BH[126]", "", sample_order)), y = taxon, size = Abundance, fill = taxon)) +
+  geom_point(alpha = 0.7, shape = 21) +
+  facet_wrap(~kingdom, scales = "free_y") +
+  scale_size_continuous(range = c(1, 10), breaks = c(0.01, 0.05, 0.1, 0.5, 1)) +
+  scale_fill_manual(values = c(speciesPalette_bact_class, speciesPalette_arch_class)) +
+  labs(title = "Bubble Plot of Relative Abundance", x = "Depth (cm)", y = "Taxon") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        axis.title.x = element_text(color = "black", size = 16),
+        axis.title.y = element_text(color = "black", size = 16),
+        axis.text.y = element_text(color = "black", size = 14),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))
+
+# Save Bubble Plot
+pdf("/home/oded/Documents/orit_sivan/articles/oded/NGS/bubble_plot/figs/24.11.18_bubble_plot_yedome_class.pdf", width = 20, height = 10, family="ArialMT")
+print(bubble_plot)
+dev.off()
+
+
+# Generate bubble plot env
+
+# Mapping of groups
+SSHE <- c("8_BH2", "38_BH2", "84_BH2", "146_BH2", "195_BH2", "225_BH2")
+SSLE <- c("23_BH1", "56_BH1", "68_BH1", "86_BH1", "106_BH1", "166_BH1",
+          "186_BH1", "259_BH1", "295_BH1", "305_BH1")
+WSLE <- c("50_BH6", "100_BH6", "162_BH6", "198_BH6", "285_BH6")
+WDLE <- c("345_BH6", "535_BH6", "564_BH6", "655_BH6", "695_BH6", "711_BH6")
+
+# Add a new column 'env'
+combined_data_summarized$env <- ifelse(combined_data_summarized$sample %in% SSHE, "SSHE",
+                                       ifelse(combined_data_summarized$sample %in% SSLE, "SSLE",
+                                              ifelse(combined_data_summarized$sample %in% WSLE, "WSLE",
+                                                     ifelse(combined_data_summarized$sample %in% WDLE, "WDLE", NA))))
+
+#
+
+bubble_plot_env <- combined_data_summarized %>%
+  ggplot(aes(x = factor(gsub("_BH[126]", "", sample), levels = gsub("_BH[126]", "", sample_order)), y = taxon, size = Abundance, fill = env)) +
+  geom_point(alpha = 0.7, shape = 21) +
+  facet_wrap(~kingdom, scales = "free_y") +
+  scale_size_continuous(range = c(1, 10), breaks = c(0.01, 0.05, 0.1, 0.5, 1)) +
+  scale_fill_manual(values = c("SSHE" = "#af58ba", "SSLE" = "#a6ad4b", "WDLE" = "#3c93c2", "WSLE" = "#800000"))+
+  labs(title = "Bubble Plot of Relative Abundance", x = "Depth (cm)", y = "Taxon") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        axis.title.x = element_text(color = "black", size = 16),
+        axis.title.y = element_text(color = "black", size = 16),
+        axis.text.y = element_text(color = "black", size = 14),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))
+
+# Save Bubble Plot
+pdf("/home/oded/Documents/orit_sivan/articles/oded/NGS/bubble_plot/figs/24.11.18_bubble_plot_yedome_class_env.pdf", width = 20, height = 10, family="ArialMT")
+print(bubble_plot_env)
+dev.off()
