@@ -1,0 +1,139 @@
+
+# Alpha diversity Legionella amplicone sequencing
+
+library(purrr)
+library(tidyr)
+library(ggplot2)
+library(tidyverse)
+library(rstatix)
+library(ez)
+library(ggpubr)
+
+
+metadata <- read.table(file = "/home/oded/Documents/orit_sivan/articles/oded/NGS/alpha/metadata.tsv", sep = "\t", header = T)
+str(metadata)
+
+
+metadata %>%
+  group_by(env) %>%
+  get_summary_stats(shannon_entropy, faith_pd, pielou_evenness, type = "median")
+
+# As some groups have small sample sizes, as well as uneven groups, I chose a non-parametric one way anova
+
+kruskal.test(shannon_entropy ~ env,
+             data = metadata)
+kruskal.test(faith_pd ~ env,
+             data = metadata)
+kruskal.test(pielou_evenness ~ env,
+             data = metadata)
+
+# env, is significant for  faith_pd and pielou_evenness
+
+# post hock
+
+# env
+
+post.dunn.env.faith_pd <- metadata %>%
+  dunn_test(faith_pd ~ env, p.adjust.method = "BH")
+post.dunn.env.faith_pd
+
+write.csv(post.dunn.env.faith_pd,"/home/oded/Documents/orit_sivan/articles/oded/NGS/alpha/post-dunn-env-faith.csv", row.names = FALSE)
+
+post.dunn.env.pielou_evenness <- metadata %>%
+  dunn_test(pielou_evenness ~ env, p.adjust.method = "BH")
+post.dunn.env.pielou_evenness
+
+write.csv(post.dunn.env.pielou_evenness,"/home/oded/Documents/orit_sivan/articles/oded/NGS/alpha/post-dunn-env-pielou_evenness.csv", row.names = FALSE)
+
+
+# Alpha diversity boxplot ----
+
+# env
+
+#Shannon
+
+p.env.shannon <- ggplot(metadata, aes(x=env, y=shannon_entropy, fill = env)) +   
+  geom_boxplot() +
+  theme_classic() + 
+  scale_y_continuous(limits=c(0, 10)) + 
+  scale_fill_manual(values = c("SSHE" = "#af58ba", "SSLE" = "#a6ad4b", "WDLE" = "#3c93c2", "WSLE" = "#800000"))+
+  theme(legend.position = "none") + labs(x= "Sampling environment", y=expression(paste("Shannon's entropy")))
+
+p.env.shannon.text <- p.env.shannon + theme(
+  axis.title.x = element_text(color="black", size=14),
+  axis.title.y = element_text(color="black", size=14),
+  axis.text.y = element_text(color="black", size=12),
+  axis.text.x = element_text(color="black", size=12),
+  legend.title = element_text(color = "black", size=12, face ="bold"),
+  legend.text = element_text(color = "black", size=12)) 
+
+pdf("/home/oded/Documents/orit_sivan/articles/oded/NGS/alpha/figs/shannon_alpha_env.pdf",  width = 10, height = 6, family="ArialMT")
+p.env.shannon.text
+dev.off()
+
+# faith_pd
+
+p.env.faith <- ggplot(metadata, aes(x=env, y=faith_pd, fill = env)) +   
+  geom_boxplot() +
+  theme_classic() + 
+  scale_y_continuous(limits=c(0, 90)) + 
+  scale_fill_manual(values = c("SSHE" = "#af58ba", "SSLE" = "#a6ad4b", "WDLE" = "#3c93c2", "WSLE" = "#800000"))+
+  theme(legend.position = "none") + labs(x= "Sampling environment", y=expression(paste("Faith's PD")))
+
+p.env.faith.text <- p.env.faith + theme(
+  axis.title.x = element_text(color="black", size=14),
+  axis.title.y = element_text(color="black", size=14),
+  axis.text.y = element_text(color="black", size=12),
+  axis.text.x = element_text(color="black", size=12),
+  legend.title = element_text(color = "black", size=12, face ="bold"),
+  legend.text = element_text(color = "black", size=12)) 
+
+
+
+post.env.faith<- post.dunn.env.faith_pd %>% add_xy_position 
+
+# Format the statistic column with three decimal places
+post.env.faith <- post.env.faith %>%
+  mutate(
+    formatted_statistic = sprintf("%.3f", statistic)
+  )
+
+p.env.faith.stat <- p.env.faith.text + stat_pvalue_manual(post.env.faith, label = "z={formatted_statistic}, p = {scales::pvalue(p.adj)}", inherit.aes = FALSE, hide.ns=TRUE, tip.length = 0.002, y.position = c(66, 74, 82, 90), xmin = "group1",  xmax = "group2")
+p.env.faith.stat
+
+pdf("/home/oded/Documents/orit_sivan/articles/oded/NGS/alpha/figs/faith-pd_alpha_env.pdf",  width = 10, height = 6, family="ArialMT")
+p.env.faith.stat
+dev.off()
+
+# pielou_evenness
+
+p.env.pielou_evenness <- ggplot(metadata, aes(x=env, y=pielou_evenness, fill = env)) +   
+  geom_boxplot() +
+  theme_classic() + 
+  scale_y_continuous(limits=c(0, 1.5)) + 
+  scale_fill_manual(values = c("SSHE" = "#af58ba", "SSLE" = "#a6ad4b", "WDLE" = "#3c93c2", "WSLE" = "#800000"))+
+  theme(legend.position = "none") + labs(x= "Sampling environment", y=expression(paste("Pielou's evenness")))
+
+p.env.pielou_evenness.text <- p.env.pielou_evenness + theme(
+  axis.title.x = element_text(color="black", size=14),
+  axis.title.y = element_text(color="black", size=14),
+  axis.text.y = element_text(color="black", size=12),
+  axis.text.x = element_text(color="black", size=12),
+  legend.title = element_text(color = "black", size=12, face ="bold"),
+  legend.text = element_text(color = "black", size=12)) 
+
+
+
+pdf("/home/oded/Documents/orit_sivan/articles/oded/NGS/alpha/figs/pielou_alpha_env.pdf",  width = 10, height = 6, family="ArialMT")
+p.env.pielou_evenness.text
+dev.off()
+
+library(grid)
+library(scales)
+library(cowplot)
+
+alpha_yadoma <- plot_grid(p.env.shannon.text, p.env.faith.stat, p.env.pielou_evenness.text, nrow=1, ncol=3, align="h", scale = 0.9)
+
+pdf("/home/oded/Documents/orit_sivan/articles/oded/NGS/alpha/figs/24.11.17_alpha_yadoma_env.pdf",  width = 20, height = 6, family="ArialMT")
+alpha_yadoma
+dev.off()
